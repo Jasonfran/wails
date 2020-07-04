@@ -110,9 +110,8 @@ func (b *boundFunction) processParameters() error {
 // call the method with the given data
 func (b *boundFunction) call(data string) ([]reflect.Value, error) {
 
-	// The data will be an array of values so we will decode the
-	// input data into
-	var jsArgs []interface{}
+	// We want to decode each parameter separately as they can be primitive types or complex objects
+	var jsArgs []json.RawMessage
 	d := json.NewDecoder(bytes.NewBufferString(data))
 	// d.UseNumber()
 	err := d.Decode(&jsArgs)
@@ -128,9 +127,13 @@ func (b *boundFunction) call(data string) ([]reflect.Value, error) {
 	// Set up call
 	args := make([]reflect.Value, len(b.inputs))
 	for index := 0; index < len(b.inputs); index++ {
-
-		// Set the input values
-		value, err := b.setInputValue(index, b.inputs[index], jsArgs[index])
+		var value reflect.Value
+		if b.inputs[index].Kind() == reflect.Struct || b.inputs[index].Kind() == reflect.Ptr {
+			value, err = b.setInputStructValue(index, b.inputs[index], jsArgs[index])
+		} else {
+			// Set the input values
+			value, err = b.setInputValue(index, b.inputs[index], jsArgs[index])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -145,7 +148,32 @@ func (b *boundFunction) call(data string) ([]reflect.Value, error) {
 }
 
 // Attempts to set the method input <typ> for parameter <index> with the given value <val>
-func (b *boundFunction) setInputValue(index int, typ reflect.Type, val interface{}) (result reflect.Value, err error) {
+func (b *boundFunction) setInputValue(index int, typ reflect.Type, rawMsg json.RawMessage) (result reflect.Value, err error) {
+
+	// Catch type conversion panics thrown by convert
+	defer func() {
+		if r := recover(); r != nil {
+			// Modify error
+			err = fmt.Errorf("%s for parameter %d of function %s", r.(string)[23:], index+1, b.fullName)
+		}
+	}()
+
+	var decodedVal interface{}
+	err = json.Unmarshal(rawMsg, &decodedVal)
+	if err != nil {
+		return
+	}
+
+	// Translate javascript null values
+	if decodedVal == nil {
+		result = reflect.Zero(typ)
+	} else {
+		result = reflect.ValueOf(decodedVal).Convert(typ)
+	}
+	return result, err
+}
+
+func (b *boundFunction) setInputStructValue(index int, typ reflect.Type, rawMsg json.RawMessage) (result reflect.Value, err error) {
 
 	// Catch type conversion panics thrown by convert
 	defer func() {
@@ -156,10 +184,18 @@ func (b *boundFunction) setInputValue(index int, typ reflect.Type, val interface
 	}()
 
 	// Translate javascript null values
-	if val == nil {
+	decodedVal := reflect.New(typ).Interface()
+	err = json.Unmarshal(rawMsg, decodedVal)
+	if err != nil {
+		return
+	}
+
+	// Translate javascript null values
+	if decodedVal == nil {
 		result = reflect.Zero(typ)
 	} else {
-		result = reflect.ValueOf(val).Convert(typ)
+		result = reflect.ValueOf(decodedVal).Elem()
 	}
+
 	return result, err
 }
