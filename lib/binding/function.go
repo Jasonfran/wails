@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 	"runtime"
 
@@ -123,17 +124,11 @@ func (b *boundFunction) call(data string) ([]reflect.Value, error) {
 	if len(jsArgs) != len(b.inputs) {
 		return nil, fmt.Errorf("Invalid number of parameters given to %s. Expected %d but got %d", b.fullName, len(b.inputs), len(jsArgs))
 	}
-
+	log.Println(b.inputs)
 	// Set up call
 	args := make([]reflect.Value, len(b.inputs))
 	for index := 0; index < len(b.inputs); index++ {
-		var value reflect.Value
-		if b.inputs[index].Kind() == reflect.Struct || b.inputs[index].Kind() == reflect.Ptr {
-			value, err = b.setInputStructValue(index, b.inputs[index], jsArgs[index])
-		} else {
-			// Set the input values
-			value, err = b.setInputValue(index, b.inputs[index], jsArgs[index])
-		}
+		value, err := b.setInputValue(index, b.inputs[index], jsArgs[index])
 		if err != nil {
 			return nil, err
 		}
@@ -149,31 +144,6 @@ func (b *boundFunction) call(data string) ([]reflect.Value, error) {
 
 // Attempts to set the method input <typ> for parameter <index> with the given value <val>
 func (b *boundFunction) setInputValue(index int, typ reflect.Type, rawMsg json.RawMessage) (result reflect.Value, err error) {
-
-	// Catch type conversion panics thrown by convert
-	defer func() {
-		if r := recover(); r != nil {
-			// Modify error
-			err = fmt.Errorf("%s for parameter %d of function %s", r.(string)[23:], index+1, b.fullName)
-		}
-	}()
-
-	var decodedVal interface{}
-	err = json.Unmarshal(rawMsg, &decodedVal)
-	if err != nil {
-		return
-	}
-
-	// Translate javascript null values
-	if decodedVal == nil {
-		result = reflect.Zero(typ)
-	} else {
-		result = reflect.ValueOf(decodedVal).Convert(typ)
-	}
-	return result, err
-}
-
-func (b *boundFunction) setInputStructValue(index int, typ reflect.Type, rawMsg json.RawMessage) (result reflect.Value, err error) {
 
 	// Catch type conversion panics thrown by convert
 	defer func() {

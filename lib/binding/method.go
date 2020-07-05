@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"reflect"
 
 	"github.com/wailsapp/wails/lib/logger"
@@ -118,9 +119,8 @@ func (b *boundMethod) processParameters() error {
 // call the method with the given data
 func (b *boundMethod) call(data string) ([]reflect.Value, error) {
 
-	// The data will be an array of values so we will decode the
-	// input data into
-	var jsArgs []interface{}
+	// We want to decode each parameter separately as they can be primitive types or complex objects
+	var jsArgs []json.RawMessage
 	d := json.NewDecoder(bytes.NewBufferString(data))
 	// d.UseNumber()
 	err := d.Decode(&jsArgs)
@@ -132,11 +132,10 @@ func (b *boundMethod) call(data string) ([]reflect.Value, error) {
 	if len(jsArgs) != len(b.inputs) {
 		return nil, fmt.Errorf("Invalid number of parameters given to %s. Expected %d but got %d", b.fullName, len(b.inputs), len(jsArgs))
 	}
-
+	log.Println(b.inputs)
 	// Set up call
 	args := make([]reflect.Value, len(b.inputs))
 	for index := 0; index < len(b.inputs); index++ {
-
 		// Set the input values
 		value, err := b.setInputValue(index, b.inputs[index], jsArgs[index])
 		if err != nil {
@@ -153,35 +152,28 @@ func (b *boundMethod) call(data string) ([]reflect.Value, error) {
 }
 
 // Attempts to set the method input <typ> for parameter <index> with the given value <val>
-func (b *boundMethod) setInputValue(index int, typ reflect.Type, val interface{}) (result reflect.Value, err error) {
+func (b *boundMethod) setInputValue(index int, typ reflect.Type, rawMsg json.RawMessage) (result reflect.Value, err error) {
 
 	// Catch type conversion panics thrown by convert
 	defer func() {
 		if r := recover(); r != nil {
 			// Modify error
-			fmt.Printf("Recovery message: %+v\n", r)
-			err = fmt.Errorf("%s for parameter %d of method %s", r.(string)[23:], index+1, b.fullName)
+			err = fmt.Errorf("%s for parameter %d of function %s", r.(string)[23:], index+1, b.fullName)
 		}
 	}()
 
-	// Do the conversion
-	// Handle nil values
-	if val == nil {
-		switch typ.Kind() {
-		case reflect.Chan,
-			reflect.Func,
-			reflect.Interface,
-			reflect.Map,
-			reflect.Ptr,
-			reflect.Slice:
-			b.log.Debug("Converting nil to type")
-			result = reflect.ValueOf(val).Convert(typ)
-		default:
-			b.log.Debug("Cannot convert nil to type, returning error")
-			return reflect.Zero(typ), fmt.Errorf("Unable to use null value for parameter %d of method %s", index+1, b.fullName)
-		}
+	// Translate javascript null values
+	decodedVal := reflect.New(typ).Interface()
+	err = json.Unmarshal(rawMsg, decodedVal)
+	if err != nil {
+		return
+	}
+
+	// Translate javascript null values
+	if decodedVal == nil {
+		result = reflect.Zero(typ)
 	} else {
-		result = reflect.ValueOf(val).Convert(typ)
+		result = reflect.ValueOf(decodedVal).Elem()
 	}
 
 	return result, err
